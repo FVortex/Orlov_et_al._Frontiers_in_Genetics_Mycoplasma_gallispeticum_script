@@ -196,7 +196,6 @@ calculate_profile <- function(dnaSeq, average_interval_size, tss_position, dynam
 ```
 
 
-
 ```{r Reading in sequences of vlhA (various strains) and non-vlhA (S6 strain) promoters of M. gallisepticum  }
 vlhA <- read.fasta('/home/mikhail/Documents/mycoplasma/gaa_for_biophysics1000(1).fasta', as.string = T, seqonly = F)
 non_vlhA <- read.fasta('/home/mikhail/Documents/mycoplasma/S6_promoters_all_genes.fasta', as.string = T, seqonly = F)
@@ -450,5 +449,8 @@ boxplot(vlhA_sidds)
 ```{r Saving the complete SIDD data}
 save(vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/vlhA_sidds.rda')
 save(non_vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/non_vlhA_sidds.rda')
+
+write.csv(vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/vlhA_sidds.csv')
+write.csv(non_vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/non_vlhA_sidds.csv')
 ```
 
