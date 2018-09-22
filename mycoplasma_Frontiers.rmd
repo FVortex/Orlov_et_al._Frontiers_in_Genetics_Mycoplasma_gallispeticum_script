@@ -29,7 +29,7 @@ strReverse <- function(x)
         sapply(lapply(strsplit(x, NULL), rev), paste, collapse="")
 ```
 
-Function for dynamical properties (according to the model of Ryasik et al., 2015) as well as sliding window GC-content calculation
+Functions for string handling, dynamical properties (according to the model of Ryasik et al., 2015) and sliding window GC-content calculation
 ```{r DNA dynamics ans GC-content function, message = FALSE}
 if(!require(ape)){stop('Code requires library "ape".\n')}
 if(!require(reldna)){stop('Code requires library "reldna".\n')}
@@ -196,11 +196,18 @@ calculate_profile <- function(dnaSeq, average_interval_size, tss_position, dynam
 ```
 
 
-```{r Reading in sequences of vlhA (various strains) and non-vlhA (S6 strain) promoters of M. gallisepticum  }
+Loading pre-calcutated SIDD data in a form of .csv files from github 
+```{r Reading in SIDD profiles as .csv files}
+vlhA_sidds <- read.csv('https://raw.githubusercontent.com/FVortex/Orlov_et_al._Frontiers_in_Genetics_Mycoplasma_gallispeticum_script/master/vlhA_sidds.csv')
+
+non_vlhA_sidds <- read.csv('https://raw.githubusercontent.com/FVortex/Orlov_et_al._Frontiers_in_Genetics_Mycoplasma_gallispeticum_script/master/non_vlhA_sidds.csv')
+```
+
+```{r Reading in sequences of vlhA (various strains) and non-vlhA (S6 strain) promoters of M. gallisepticum, eval=F}
 vlhA <- read.fasta('/home/mikhail/Documents/mycoplasma/gaa_for_biophysics1000(1).fasta', as.string = T, seqonly = F)
 non_vlhA <- read.fasta('/home/mikhail/Documents/mycoplasma/S6_promoters_all_genes.fasta', as.string = T, seqonly = F)
 
-non_vlhA <- sapply(non_vlhA, FUN = function(x) {substr(x, start = 500, stop = 1499)})
+#non_vlhA <- sapply(non_vlhA, FUN = function(x) {substr(x, start = 500, stop = 1499)})
 
 length(vlhA); table(sapply(vlhA, nchar))
 length(non_vlhA); table(sapply(non_vlhA, nchar))
@@ -220,7 +227,8 @@ ord <- order(counts)
 image.DNAbin(as.DNAbin(t(sapply(vlhA[ord], FUN = function(x) {strsplit(x, split = '')[[1]]})))[,400:600], show.labels = F)
 ```
 
-```{r}
+GAA repeats locations and statistics
+```{r GAA counts matching}
 length(which(str_detect(vlhA, pattern = '[^(gaa)](gaa){4,20}(?!(gaa))')))
 #20 is max
 which.4_20 <- which(str_detect(vlhA, pattern = '[^(gaa)](gaa){4,20}(?!(gaa))'))
@@ -343,8 +351,11 @@ gc_vlhA <- GC.content(as.DNAbin(as.character(t(sapply(vlhA, FUN = function(x) {s
 gc_nonvlhA <- GC.content(as.DNAbin(as.character(t(sapply(non_vlhA, FUN = function(x) {rev(strsplit(x, split = ''))[[1]]}))[,500:600]))) #reversed!
 ```
 
+SIDD calculation using rSIDD function being a rapper for perl script taken from https://bitbucket.org/benhamlab/sist_codes.git
 
-```{r SIDD calculation for vlhA promoters}
+The function requires local modification to use; its work is also computationally demanding.
+Therefore for convience pre-calculated SIDD profiles are deposited at the github (see code below)
+```{r SIDD calculation for vlhA promoters, eval=F}
 
 dir_sidd_vlhA <- ('/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/mycoplasma_vlhA_sidds/')
 
@@ -419,6 +430,7 @@ matplot(`Sequence (nts)`, non_vlhA_sidds, type = 'l', lwd = 0.25, lty =1, col = 
 abline(v = 0, lty = 2)
 
 ```
+
 ```{r SIDD profiles for vlhA and non-vlhA together}
 
 par(mfrow = c(2,1))
@@ -446,16 +458,20 @@ boxplot(apply(non_vlhA_sidds, 2, mean), ylim =  c(0.02, 0.04))
 boxplot(vlhA_sidds)
 ```
 
-```{r Saving the complete SIDD data}
+```{r Saving the complete SIDD data, eval=F}
 save(vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/vlhA_sidds.rda')
 save(non_vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/non_vlhA_sidds.rda')
 
+#writing sequences
+write.fasta(vlhA, file.out = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/vlhA_sequences.fasta', names = names_vlhA, as.string = T)
+write.fasta(non_vlhA, file.out = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/non_vlhA_sequences.fasta', names = names_vlhA, as.string = T)
+
+#SIDD profiles
 write.csv(vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/vlhA_sidds.csv', row.names = T)
 write.csv(non_vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/non_vlhA_sidds.csv', row.names = T)
 
-
 tmp <- read.csv('https://raw.githubusercontent.com/FVortex/Orlov_et_al._Frontiers_in_Genetics_Mycoplasma_gallispeticum_script/master/vlhA_sidds.csv')
 
-str(tmp)
+View(tmp)
 ```
 
