@@ -1,0 +1,454 @@
+---
+title: "Orlov_et_al._Mycoplasma_gallispeticum_script"
+author: "Mikhail Orlov"
+date: '6 ноября 2017 г '
+output:
+  html_document: default
+  pdf_document: default
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Clearing workspace and loading R packages
+```{r, message=FALSE}
+rm(list=ls())
+
+library(seqinr)
+library(reldna)
+library(ggplot2)
+library(ggseqlogo)
+library(stringr)
+```
+
+Function for string reversal
+```{r strReverse function, message = FALSE}
+## a useful function: rev() for strings
+strReverse <- function(x)
+        sapply(lapply(strsplit(x, NULL), rev), paste, collapse="")
+```
+
+Function for dynamical properties (according to the model of Ryasik et al., 2015) as well as sliding window GC-content calculation
+```{r DNA dynamics ans GC-content function, message = FALSE}
+if(!require(ape)){stop('Code requires library "ape".\n')}
+if(!require(reldna)){stop('Code requires library "reldna".\n')}
+if(!require(parallel)){stop('Code requires library "parallel".\n')}
+if(!require(Biostrings)){stop('Code requires library "Biostrings".\n')}
+
+get_forward_subseq <- function(seq, tss, boundaries) {
+  return(as.character(
+    DNAString(seq,
+              start = tss-boundaries[1],
+              nchar = sum(boundaries)+1)))
+}
+
+get_reverse_subseq <- function(seq, tss, boundaries) {
+  return(as.character(
+    reverseComplement(
+      DNAString(seq,
+                start = tss-boundaries[2],
+                nchar = sum(boundaries)+1))))
+}
+
+get_forward_substring <- function(seq, tss, boundaries) {
+   return(seq[(tss-boundaries[1]):(tss+boundaries[2])])
+}
+
+get_reverse_substring <- function(seq, tss, boundaries) {
+  res <- rev(chartr("ATGC", "TACG", seq[(tss-boundaries[2]):(tss+boundaries[1])]))
+  return(res)
+}
+
+cut_char_vec <- function(char_vec, tss, boundaries, strand) {
+  res <- switch(strand,
+         forward = char_vec[(tss-boundaries[1]):(tss+boundaries[2])],
+         reverse = char_vec[(tss-boundaries[2]):(tss+boundaries[1])]
+         )
+  return(res)
+}
+
+#' Title
+#'
+#' @param seq full sequence (chromosome)
+#' @param interval requested interval
+#' @param tss
+#' @param strand DNA strand
+#'
+#' @return
+#' @export
+#'
+#' @examples
+dynchars <- function(seq, average_interval_size, tss, boundaries, strand=c('forward','reverse')) {
+
+  if (missing(average_interval_size))
+  stop("Need to specify average_interval_size")
+
+  if(!is.character(seq))
+    stop("Sequence must be a character vector containing A, C, G, T letters only")
+  #make sure no small letters are present
+  seq <- toupper(seq)
+  # if((tss - average_interval_size < 1) || (tss + average_interval_size > length(seq)))
+  #   stop("Considered average_interval_size exceeds the size of the sequence")
+  
+  # seq <- switch(strand, 
+  #               forward = seq,
+  #               reverse = as.character(reverseComplement(DNAString(seq))))
+  # seq <- unlist(strsplit(seq, ''))
+  # seq <- toupper(seq)
+  
+  boundaries <- boundaries + average_interval_size %/% 2
+  
+  seq <- cut_char_vec(seq, tss, boundaries, strand)
+
+  # strand <- match.arg(strand)
+  # seq <- switch(strand,
+  #             forward=get_forward_substring(seq, tss, boundaries),
+  #             reverse=get_forward_substring(seq, tss, boundaries))#get_reverse_substring(seq, tss, boundaries))
+
+  a<-3.4*10^(-10)
+  #I<-c(7.6, 4.8, 8.2, 4.1)*10^(-44)
+  K<-c(227, 155, 220, 149)*10^(-20)
+  V<-c(2.09, 1.43, 3.12, 2.12)*10^(-20)
+
+  csA<-cumsum(seq=='A')
+  csT<-cumsum(seq=='T')
+  csG<-cumsum(seq=='G')
+  csC<-cumsum(seq=='C')
+
+  countA = csA[average_interval_size:length(csA)]-c(0, csA[1:(length(csA)-average_interval_size)])
+  countT = csT[average_interval_size:length(csT)]-c(0, csT[1:(length(csT)-average_interval_size)])
+  countG = csG[average_interval_size:length(csG)]-c(0, csG[1:(length(csG)-average_interval_size)])
+  countC = csC[average_interval_size:length(csC)]-c(0, csC[1:(length(csC)-average_interval_size)])
+
+  M <- cbind(countA, countT, countG, countC)/average_interval_size
+
+  #Is <- as.numeric(M%*%I)#! numeric conversion
+  Ks <- as.numeric(M %*% K)
+  Vs <- as.numeric(M %*% V)
+
+  E0 <- (8*(Ks*Vs)^0.5)* 6E23 / 4184
+  d <- ((Ks*a^2)/Vs)^(0.5)/a;
+  gc = M[,3] + M[,4]
+
+  dynchars_return <- list(E0=E0, d=d, gc=gc)
+  return(dynchars_return)
+}
+
+#' Title
+#'
+#' @param tss_position
+#' @param extended_string -- vector of characters
+#' @param ep_interval
+#' @param zout
+#' @param strand
+#'
+#' @return
+#' @export
+#'
+#' @examples
+calculate_EP_on_interval <- function(tss_position, extended_string, ep_interval=c(270, 130), zout=-540:179, strand=c('forward','reverse')) {
+  #lseqspline1D(substr(e.coli_U00096.2, exp_tsss[i]-250, exp_tsss[i]+150), bound=c(50, 350), ref=251 )
+  # strand<- match.arg(strand)
+  #extended_string <- unlist(strsplit(extended_string, ''))
+  # subseq <-switch(strand,
+  #                 forward = get_forward_substring(extended_string, tss_position, ep_interval),
+  #                 reverse = get_reverse_substring(extended_string, tss_position, ep_interval))
+  # subseq <- paste0(subseq, collapse = "")
+  
+  # subseq <- switch(strand,
+  #                  forward = get_forward_subseq(extended_string, tss_position, ep_interval),
+  #                  reverse = get_reverse_subseq(extended_string, tss_position, ep_interval))
+  # subseq <- switch(strand,
+  #                  forward = get_forward_substring(extended_string, tss_position, ep_interval),
+  #                  reverse = get_reverse_substring(extended_string, tss_position, ep_interval))
+  # subseq <- as.character(subseq)
+  subseq <- as.character(cut_char_vec(extended_string, tss_position, ep_interval, strand))
+  subseq <- paste0(subseq, collapse = "")
+  p <- lseqspline1D(
+    subseq,
+    bound=c(50, 350),
+    ref=271)
+  return(p$mpot[p$x %in% zout])
+}
+
+#' Title
+#'
+#' @param dnaSeq
+#' @param dynamic_interval
+#' @param tss_position
+#' @param ep_interval
+#' @param zout
+#' @param strand
+#'
+#' @return
+#' @export
+#'
+#' @examples
+calculate_profile <- function(dnaSeq, average_interval_size, tss_position, dynamic_interval, ep_interval=c(270, 130), zout=-540:179, strand=c('forward','reverse')) {
+  #ep_interval = c(163, 213) for reverse, for forward c(267, 217), zout - the same
+  #seq, average_interval_size, tss, boundaries, strand=c('forward','reverse')
+  #dnaSeq <- unlist(strsplit(dnaSeq, ''))
+  dynRes <- dynchars(dnaSeq, average_interval_size, tss_position,  dynamic_interval, strand)
+  epRes <- calculate_EP_on_interval(tss_position, dnaSeq, ep_interval, zout, strand)
+  return(c(dynRes$E0, dynRes$d, epRes, dynRes$gc))
+}
+```
+
+
+
+```{r Reading in sequences of vlhA (various strains) and non-vlhA (S6 strain) promoters of M. gallisepticum  }
+vlhA <- read.fasta('/home/mikhail/Documents/mycoplasma/gaa_for_biophysics1000(1).fasta', as.string = T, seqonly = F)
+non_vlhA <- read.fasta('/home/mikhail/Documents/mycoplasma/S6_promoters_all_genes.fasta', as.string = T, seqonly = F)
+
+non_vlhA <- sapply(non_vlhA, FUN = function(x) {substr(x, start = 500, stop = 1499)})
+
+length(vlhA); table(sapply(vlhA, nchar))
+length(non_vlhA); table(sapply(non_vlhA, nchar))
+
+names_vlhA <- names(sapply(vlhA, FUN = function(x) {names(x[2])}))
+#strands_vlhA <- substr(names_vlhA, nchar(names_vlhA), nchar(names_vlhA))
+```
+
+```{r Sequence exploration - broader context}
+image.DNAbin(as.DNAbin(t(sapply(vlhA, FUN = function(x) {strsplit(x, split = '')[[1]]}))), show.labels = F)
+image.DNAbin(as.DNAbin(t(sapply(non_vlhA, FUN = function(x) {strsplit(x, split = '')[[1]]}))), show.labels = F)
+
+#same with sequences order bythe lenght of the repeat regions
+counts <- sapply(vlhA, FUN = function(x) {str_count(x, pattern = 'gaagaa')})
+ord <- order(counts)
+
+image.DNAbin(as.DNAbin(t(sapply(vlhA[ord], FUN = function(x) {strsplit(x, split = '')[[1]]})))[,400:600], show.labels = F)
+```
+
+```{r}
+length(which(str_detect(vlhA, pattern = '[^(gaa)](gaa){4,20}(?!(gaa))')))
+#20 is max
+which.4_20 <- which(str_detect(vlhA, pattern = '[^(gaa)](gaa){4,20}(?!(gaa))'))
+
+str_located <- c()
+substrings_to_logo_lefts <- c()
+substrings_to_logo_rights <- c()
+for (i in vlhA[which.4_20]){
+  tmp <- str_locate(i, pattern = '[^(gaa)](gaa){4,20}(?!(gaa))')
+  str_located <- rbind(str_located, tmp)
+                       
+  substrings_to_logo_lefts <- c(substrings_to_logo_lefts, substr(i, start = min(as.numeric(tmp))-35, stop =min(as.numeric(tmp))+6)) #for aligned left flanks
+  substrings_to_logo_rights <- c(substrings_to_logo_rights, substr(i, start = max(as.numeric(tmp))-6, stop =max(as.numeric(tmp))+35)) #for aligned right flanks
+  
+}
+
+boxplot(str_located[,1])
+boxplot(str_located[,2])
+
+labels_new <- -(rev(1:nchar(substrings_to_logo_lefts[1]))-6)
+labels_new[37:42] <- 'R'
+
+p1 <- ggseqlogo(sapply(substrings_to_logo_lefts, FUN = function(x) {paste0(toupper(x), collapse = '')}),  ncol = 1)+ scale_y_continuous(name="Информационнное содержание (бит)")+scale_x_discrete(name ="Последовательность относительно приблизительного положения ТСТ (п.н.)", limits=seq_along(labels_new), labels =labels_new)+coord_fixed(ratio = 7)
+
+d=data.frame(x=c(1,2,3,4), y=c(4,5))
+p2 <- ggplot(data=d, mapping=aes(x=x, y=y)) + geom_blank()+ theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "white")) + coord_fixed() + theme(axis.title.x=element_blank(), axis.text.x=element_blank(),                   axis.ticks.x=element_blank())+   theme(axis.title.y=element_blank(), axis.text.y=element_blank(), axis.ticks.y=element_blank()) + ggtitle('(GAA)xN,\n where N is between 4 and 20\n\n\n.........................................')
+labels_new <- c(rep('R', 7),
+                1:35)
+#+  ggtitle("Plant growth with\ndifferent treatments") 
+p3 <- ggseqlogo(sapply(substrings_to_logo_rights[], FUN = function(x) {paste0(toupper(x), collapse = '')}),  ncol = 1)+ scale_y_continuous(name="Информационнное содержание (бит)")+scale_x_discrete(name ="Последовательность относительно приблизительного положения ТСТ (п.н.)", limits=seq_along(labels_new), labels =labels_new)+coord_fixed(ratio = 7)
+
+library(gridExtra)
+grid.arrange(p1, p2, p3, ncol = 3, as.table = FALSE)
+```
+Physicochemical properties calculation
+Physicochemical property I: open states dynamics according to the model of Ryasik et al., 2015
+```{r Activation energy of open states, vlhA promoters}
+dyn_int <- 25
+
+#TSSs are at 500 + 90
+Ldyn_vlhA <- lapply(vlhA, FUN = function(x) {dynchars(seq = strsplit(x, split = '')[[1]], average_interval_size = dyn_int, tss = 500 + 90, boundaries = c(200, 200), strand = 'forward')})
+#E0
+mat_E0_vlhA <- sapply(Ldyn_vlhA, function(x) {x$E0})
+
+```
+
+```{r Activation energy of open states, non-vlhA promoters}
+dyn_int <- 25
+
+#TSSs are at 500!
+Ldyn_non_vlhA <- lapply(non_vlhA, FUN = function(x) {dynchars(seq = strsplit(x, split = '')[[1]], average_interval_size = dyn_int, tss = 500, boundaries = c(200, 200), strand = 'forward')})
+#E0
+mat_E0_non_vlhA <- sapply(Ldyn_non_vlhA, function(x) {x$E0})
+```
+
+```{r Plotting E0 profiles for vlhA vs non-vlhA promoters}
+par(mfrow = c(2,1))
+`Sequence (nts)` <- 1:nrow(mat_E0_vlhA)-200
+matplot(`Sequence (nts)`, mat_E0_vlhA, type = 'l', lwd = 0.1,  col = 1, ylab = 'Open states activation energy (kcal/mole)', main = paste(ncol(mat_E0_vlhA), 'vlhA promoter sequences'))
+
+gaa_repeats <- -75:-50
+approx_tsss <- max(gaa_repeats)+50
+
+segments(x0 = min(gaa_repeats), y0 = max(mat_E0_vlhA, na.rm = T), x1 = max(gaa_repeats), y1 = max(mat_E0_vlhA, na.rm = T), lwd = 3, col = 'darkred')
+abline(v = approx_tsss, lty=2, lwd = 2)
+legend('bottomright', legend = c('GAA-repeats', 'TSS'), lty = c(1,2), col = c('darkred', 'black'), lwd = 2, bty = 'n', ncol = 2)
+
+matplot(`Sequence (nts)`, mat_E0_non_vlhA, type = 'l', lwd = 0.1,  col = 1, ylab = 'Open states activation energy (kcal/mole)', main = paste(ncol(mat_E0_non_vlhA), 'non-vlhA promoter sequences'))
+
+abline(v = approx_tsss, lty=2, lwd = 2)
+legend('bottomright', legend = c('TSS'), lty = c(2), col = c('black'), lwd = 2, bty = 'n')
+```
+
+
+```{r vlhA vs non-vlhA, EP}
+zout <- -(350):(350) #approximately equales 200 nts
+
+#output in nts
+Lep_vlhA <- sapply(vlhA, FUN = function(x) {
+  p <- lseqspline1D(s = strReverse(x),bound = c(570-200, 570+200), width = 1, ref = 500 + 70)
+(p$mpot[p$x %in% zout]) #!boundary
+  
+  inds_nts <- which(p$x%in%p$i1)
+  return((p$mpot[inds_nts]))
+})
+
+str(Lep_vlhA)
+
+Lep_non_vlhA <- sapply(non_vlhA, FUN = function(x) {
+  p <- lseqspline1D(s = strReverse(x), bound = c(500-200, 500+200), width = 1, ref = 500)
+(p$mpot[p$x %in% zout]) #!boundary
+  
+  inds_nts <- which(p$x%in%p$i1)
+  return((p$mpot[inds_nts]))
+})
+
+str(Lep_non_vlhA)
+
+#plotting vlhA vs non-vlhA
+par(mfrow = c(2,1))
+`Sequence (nts)` <- 1:nrow(Lep_vlhA)-200
+matplot(`Sequence (nts)`, Lep_vlhA, type = 'l', lwd = 0.1,  col = 1, ylab = 'Electrostatic potential (arbitrary units)', main = paste(ncol(mat_E0_vlhA), 'for vlhA promoter sequences'))
+
+abline(v = 300, lty =2, lwd = 2)
+
+matplot(`Sequence (nts)`, Lep_non_vlhA, type = 'l', lwd = 0.1,  col = 1, ylab = 'Electrostatic potential (arbitrary units)', main = paste(ncol(mat_E0_non_vlhA), 'for non-vlhA promoter sequences'))
+abline(v = 300, lty =2, lwd = 2)
+
+
+
+
+
+
+```
+
+```{r raw GC}
+
+gc_vlhA <- GC.content(as.DNAbin(as.character(t(sapply(vlhA, FUN = function(x) {strsplit(x, split = '')[[1]]}))[,500:600]))) #reversed!
+gc_nonvlhA <- GC.content(as.DNAbin(as.character(t(sapply(non_vlhA, FUN = function(x) {rev(strsplit(x, split = ''))[[1]]}))[,500:600]))) #reversed!
+```
+
+
+```{r SIDD calculation for vlhA promoters}
+
+dir_sidd_vlhA <- ('/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/mycoplasma_vlhA_sidds/')
+
+#unlink(dir_sidd_vlhA, recursive = T)
+dir.create(dir_sidd_vlhA)
+dir(dir_sidd_vlhA)
+
+
+# SIDDr function
+rSIDD <- function(sequence = sequence, algorithm = algorithm, sigma = sigma, temperature = temperature, form = form, file.out = file.out, sidd_dir = sidd_dir){
+  library(seqinr)
+  sidd_dir <- sidd_dir
+  seq <- toupper(paste0(sequence[[1]], collapse = ''))
+  #  sidd_dir <- paste0(getwd(), "/TMPSIDD", as.numeric(Sys.time()))
+  # dir.create(sidd_dir)
+  writeLines(text = seq, con = paste0(sidd_dir, 'tmp_input.txt'))
+  print(paste('Processing', substr(seq, 0, 50)))
+  system(paste0('cd /home/mikhail/Documents/sist/
+                ', 'perl -X master.pl -a M -f ', paste0(sidd_dir, "tmp_input.txt"), ' -s ', sigma, ' -t ', temperature, ' -o ' ,  paste0(sidd_dir, 'tmp_out.csv')))
+  tmp <- read.csv(paste0(sidd_dir, 'tmp_out.csv'), sep = '\t', skip = 1)
+  # #
+  tmp <- cbind(tmp, strsplit(seq, split = '')[[1]])
+  colnames(tmp)[4] <- 'Nucleotide'
+  return(tmp)
+  unlink(substr(seq, 0, 25))
+}
+
+
+vlhA_sidds <- c()
+
+for (i in vlhA) {
+  print(i)
+  #write.fasta(sequences = i, names = NULL, as.string = T, file.out = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/mycoplasma_vlhA_sidds/tmpjunk.fasta')
+  tmp <- rSIDD(sequence =  i, algorithm = 'M', sigma = 0.06, temperature = 314, sidd_dir = dir_sidd_vlhA, form = 'l', file.out = 'tmpjunk_output')
+  vlhA_sidds <- cbind(vlhA_sidds, tmp$P.x.)
+  unlink(paste0(dir_sidd_vlhA, 'tmpjunk_output'))
+}
+
+str(vlhA_sidds)
+
+`Sequence (nts)` <- 1:nrow(vlhA_sidds)-500-70
+matplot(`Sequence (nts)`, vlhA_sidds, type = 'l', lwd = 0.25, lty =1, col = 1, ylim = 0:1, ylab = 'Opening pobability', main = paste(ncol(vlhA_sidds), 'vlhA promoter sequences'))
+abline(v = 0, lty = 2)
+segments(x0 = -105, x1 = -70, y0 = 0.95, y1 = 0.95, col = 1, lwd = 2)
+```
+
+
+
+
+```{r SIDD calculation for non-vlhA promoters}
+
+dir_sidd_non_vlhA <- ('/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/mycoplasma_non_vlhA_sidds/')
+
+#unlink(dir_sidd_non_vlhA, recursive = T)
+dir.create(dir_sidd_non_vlhA)
+dir(dir_sidd_non_vlhA)
+
+non_vlhA_sidds <- c()
+
+for (i in non_vlhA) {
+  print(i)
+  #write.fasta(sequences = i, names = NULL, as.string = T, file.out = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/mycoplasma_non_vlhA_sidds/tmpjunk.fasta')
+  tmp <- rSIDD(sequence =  i, algorithm = 'M', sigma = 0.06, temperature = 314, sidd_dir = dir_sidd_non_vlhA, form = 'l', file.out = 'tmpjunk_output')
+  non_vlhA_sidds <- cbind(non_vlhA_sidds, tmp$P.x.)
+  unlink(paste0(dir_sidd_non_vlhA, 'tmpjunk_output'))
+}
+
+str(non_vlhA_sidds)
+
+`Sequence (nts)` <- 1:nrow(non_vlhA_sidds)-500 #TSS is at the center
+matplot(`Sequence (nts)`, non_vlhA_sidds, type = 'l', lwd = 0.25, lty =1, col = 1, ylim = 0:1, ylab = 'Opening pobability', main = paste(ncol(non_vlhA_sidds), 'S6 strain non-vlhA promoter sequences'))
+abline(v = 0, lty = 2)
+
+```
+```{r SIDD profiles for vlhA and non-vlhA together}
+
+par(mfrow = c(2,1))
+`Sequence (nts)` <- 1:nrow(vlhA_sidds)-500-70
+matplot(`Sequence (nts)`, vlhA_sidds, type = 'l', lwd = 0.25, lty =1, col = 1, ylim = 0:1, ylab = 'Opening pobability', main = paste(ncol(vlhA_sidds), 'vlhA promoter sequences'))
+abline(v = 0, lty = 2)
+segments(x0 = -105, x1 = -70, y0 = 0.95, y1 = 0.95, col = 1, lwd = 2)
+
+#`Sequence (nts)` <- 1:nrow(non_vlhA_sidds)-500 #TSS is at the center
+matplot(`Sequence (nts)`, non_vlhA_sidds, type = 'l', lwd = 0.25, lty =1, col = 1, ylim = 0:1, ylab = 'Opening pobability', main = paste(ncol(non_vlhA_sidds), 'S6 strain non-vlhA promoter sequences'))
+abline(v = 0, lty = 2)
+
+```
+
+```{r SIDD statisctics}
+
+par(mfrow = c(1, 2))
+boxplot(apply(vlhA_sidds, 2, max), ylim = 0:1)
+boxplot(apply(non_vlhA_sidds, 2, max), ylim = 0:1)
+
+par(mfrow = c(1, 2))
+boxplot(apply(vlhA_sidds, 2, mean), ylim = c(0.02, 0.04))
+boxplot(apply(non_vlhA_sidds, 2, mean), ylim =  c(0.02, 0.04))
+
+boxplot(vlhA_sidds)
+```
+
+```{r Saving the complete SIDD data}
+save(vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/vlhA_sidds.rda')
+save(non_vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/non_vlhA_sidds.rda')
+```
+
