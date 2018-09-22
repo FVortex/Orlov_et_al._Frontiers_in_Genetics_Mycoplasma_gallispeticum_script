@@ -450,7 +450,12 @@ boxplot(vlhA_sidds)
 save(vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/vlhA_sidds.rda')
 save(non_vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/non_vlhA_sidds.rda')
 
-write.csv(vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/vlhA_sidds.csv')
-write.csv(non_vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/non_vlhA_sidds.csv')
+write.csv(vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/vlhA_sidds.csv', row.names = T)
+write.csv(non_vlhA_sidds, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/non_vlhA_sidds.csv', row.names = T)
+
+
+tmp <- read.csv('https://raw.githubusercontent.com/FVortex/Orlov_et_al._Frontiers_in_Genetics_Mycoplasma_gallispeticum_script/master/vlhA_sidds.csv')
+
+str(tmp)
 ```
 
