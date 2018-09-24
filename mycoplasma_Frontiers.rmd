@@ -196,18 +196,11 @@ calculate_profile <- function(dnaSeq, average_interval_size, tss_position, dynam
 ```
 
 
-Loading pre-calcutated SIDD data in a form of .csv files from github 
-```{r Reading in SIDD profiles as .csv files}
-vlhA_sidds <- read.csv('https://raw.githubusercontent.com/FVortex/Orlov_et_al._Frontiers_in_Genetics_Mycoplasma_gallispeticum_script/master/vlhA_sidds.csv')
+```{r Reading in sequences of vlhA (various strains) and non-vlhA (S6 strain) promoters of M. gallisepticum, eval=T}
+vlhA <- read.fasta('https://raw.githubusercontent.com/FVortex/Orlov_et_al._Frontiers_in_Genetics_Mycoplasma_gallispeticum_script/master/vlhA_sequences.fasta', as.string = T, seqonly = F)
+non_vlhA <- read.fasta('https://raw.githubusercontent.com/FVortex/Orlov_et_al._Frontiers_in_Genetics_Mycoplasma_gallispeticum_script/master/non_vlhA_sequences.fasta', as.string = T, seqonly = F)
 
-non_vlhA_sidds <- read.csv('https://raw.githubusercontent.com/FVortex/Orlov_et_al._Frontiers_in_Genetics_Mycoplasma_gallispeticum_script/master/non_vlhA_sidds.csv')
-```
-
-```{r Reading in sequences of vlhA (various strains) and non-vlhA (S6 strain) promoters of M. gallisepticum, eval=F}
-vlhA <- read.fasta('/home/mikhail/Documents/mycoplasma/gaa_for_biophysics1000(1).fasta', as.string = T, seqonly = F)
-non_vlhA <- read.fasta('/home/mikhail/Documents/mycoplasma/S6_promoters_all_genes.fasta', as.string = T, seqonly = F)
-
-#non_vlhA <- sapply(non_vlhA, FUN = function(x) {substr(x, start = 500, stop = 1499)})
+#non_vlhA <- sapply(non_vlhA, FUN = function(x) {substr(x, start = 500, stop = 1499)}) used previously to trim the sequences
 
 length(vlhA); table(sapply(vlhA, nchar))
 length(non_vlhA); table(sapply(non_vlhA, nchar))
@@ -216,7 +209,9 @@ names_vlhA <- names(sapply(vlhA, FUN = function(x) {names(x[2])}))
 #strands_vlhA <- substr(names_vlhA, nchar(names_vlhA), nchar(names_vlhA))
 ```
 
-```{r Sequence exploration - broader context}
+```{r vlhA vs non-vlhA promoters: sequence exploration - broader context}
+par(mfrow = c(2,1))
+
 image.DNAbin(as.DNAbin(t(sapply(vlhA, FUN = function(x) {strsplit(x, split = '')[[1]]}))), show.labels = F)
 image.DNAbin(as.DNAbin(t(sapply(non_vlhA, FUN = function(x) {strsplit(x, split = '')[[1]]}))), show.labels = F)
 
@@ -229,7 +224,25 @@ image.DNAbin(as.DNAbin(t(sapply(vlhA[ord], FUN = function(x) {strsplit(x, split 
 
 GAA repeats locations and statistics
 ```{r GAA counts matching}
-length(which(str_detect(vlhA, pattern = '[^(gaa)](gaa){4,20}(?!(gaa))')))
+#overall repeats regions length
+#for vlhA promoters
+repeats_numbers_vlhA <- c()
+for (i in 2:20){
+  repeats_numbers_vlhA <- c(repeats_numbers_vlhA, length(which(str_detect(vlhA, pattern = paste0('[^(gaa)](gaa){',i,',20}(?!(gaa))')))))
+}
+names(repeats_numbers_vlhA) <- 2:20
+
+#for non-vlhA promoters
+repeats_numbers_non_vlhA <- c()
+for (i in 2:20){
+  repeats_numbers_non_vlhA <- c(repeats_numbers_non_vlhA, length(which(str_detect(non_vlhA, pattern = paste0('[^(gaa)](gaa){',i,',20}(?!(gaa))')))))
+}
+names(repeats_numbers_non_vlhA) <- 2:20
+
+par(mfrow = c(1,2))
+barplot(repeats_numbers_vlhA, ylim = range(repeats_numbers_vlhA), main = paste(length(vlhA), 'vlhA promoters'), xlab = 'Length of the repeats\n (number of repeated units)', ylab = 'Number of perfect GAA repeats in a row')
+
+barplot(repeats_numbers_non_vlhA, ylim = range(repeats_numbers_vlhA), main = paste(length(non_vlhA), 'Non-vlhA promoters'), xlab = 'Length of the repeats\n (number of repeated units)', ylab = 'Number of perfect GAA repeats in a row')
 #20 is max
 which.4_20 <- which(str_detect(vlhA, pattern = '[^(gaa)](gaa){4,20}(?!(gaa))'))
 
@@ -245,13 +258,13 @@ for (i in vlhA[which.4_20]){
   
 }
 
-boxplot(str_located[,1])
-boxplot(str_located[,2])
+#boxplot(str_located[,1])
+#boxplot(str_located[,2])
 
 labels_new <- -(rev(1:nchar(substrings_to_logo_lefts[1]))-6)
 labels_new[37:42] <- 'R'
 
-p1 <- ggseqlogo(sapply(substrings_to_logo_lefts, FUN = function(x) {paste0(toupper(x), collapse = '')}),  ncol = 1)+ scale_y_continuous(name="Информационнное содержание (бит)")+scale_x_discrete(name ="Последовательность относительно приблизительного положения ТСТ (п.н.)", limits=seq_along(labels_new), labels =labels_new)+coord_fixed(ratio = 7)
+p1 <- ggseqlogo(sapply(substrings_to_logo_lefts, FUN = function(x) {paste0(toupper(x), collapse = '')}),  ncol = 1)+ scale_y_continuous(name="Informational content (bits)")+scale_x_discrete(name ="Sequence, coordinates with the repsect of the repeats flank", limits=seq_along(labels_new), labels =labels_new)+coord_fixed(ratio = 7)
 
 d=data.frame(x=c(1,2,3,4), y=c(4,5))
 p2 <- ggplot(data=d, mapping=aes(x=x, y=y)) + geom_blank()+ theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
@@ -259,13 +272,13 @@ panel.grid.minor = element_blank(), axis.line = element_line(colour = "white")) 
 labels_new <- c(rep('R', 7),
                 1:35)
 #+  ggtitle("Plant growth with\ndifferent treatments") 
-p3 <- ggseqlogo(sapply(substrings_to_logo_rights[], FUN = function(x) {paste0(toupper(x), collapse = '')}),  ncol = 1)+ scale_y_continuous(name="Информационнное содержание (бит)")+scale_x_discrete(name ="Последовательность относительно приблизительного положения ТСТ (п.н.)", limits=seq_along(labels_new), labels =labels_new)+coord_fixed(ratio = 7)
+p3 <- ggseqlogo(sapply(substrings_to_logo_rights[], FUN = function(x) {paste0(toupper(x), collapse = '')}),  ncol = 1)+ scale_y_continuous(name="Informational content (bits)")+scale_x_discrete(name ="Sequence, coordinates with the repsect of the repeats flank", limits=seq_along(labels_new), labels =labels_new)+coord_fixed(ratio = 7)
 
 library(gridExtra)
 grid.arrange(p1, p2, p3, ncol = 3, as.table = FALSE)
 ```
-Physicochemical properties calculation
-Physicochemical property I: open states dynamics according to the model of Ryasik et al., 2015
+##Physicochemical properties calculation
+#Physicochemical property I: open states dynamics according to the model of Ryasik et al., 2015
 ```{r Activation energy of open states, vlhA promoters}
 dyn_int <- 25
 
@@ -303,6 +316,44 @@ abline(v = approx_tsss, lty=2, lwd = 2)
 legend('bottomright', legend = c('TSS'), lty = c(2), col = c('black'), lwd = 2, bty = 'n')
 ```
 
+#Physicochemical property II: open states dynamics according to the model of Ryasik et al., 2015
+```{r Size of open states, vlhA promoters}
+dyn_int <- 25
+
+#TSSs are at 500 + 90
+Ldyn_vlhA <- lapply(vlhA, FUN = function(x) {dynchars(seq = strsplit(x, split = '')[[1]], average_interval_size = dyn_int, tss = 500 + 90, boundaries = c(200, 200), strand = 'forward')})
+#d
+mat_d_vlhA <- sapply(Ldyn_vlhA, function(x) {x$d})
+
+```
+
+```{r Size of open states, non-vlhA promoters}
+dyn_int <- 25
+
+#TSSs are at 500!
+Ldyn_non_vlhA <- lapply(non_vlhA, FUN = function(x) {dynchars(seq = strsplit(x, split = '')[[1]], average_interval_size = dyn_int, tss = 500, boundaries = c(200, 200), strand = 'forward')})
+#d
+mat_d_non_vlhA <- sapply(Ldyn_non_vlhA, function(x) {x$d})
+```
+
+```{r Plotting d profiles for vlhA vs non-vlhA promoters}
+par(mfrow = c(2,1))
+`Sequence (nts)` <- 1:nrow(mat_d_vlhA)-200
+matplot(`Sequence (nts)`, mat_d_vlhA, type = 'l', lwd = 0.1,  col = 1, ylab = 'Size of open states (nts)', main = paste(ncol(mat_d_vlhA), 'vlhA promoter sequences'))
+
+gaa_repeats <- -75:-50
+approx_tsss <- max(gaa_repeats)+50
+
+segments(x0 = min(gaa_repeats), y0 = max(mat_d_vlhA, na.rm = T), x1 = max(gaa_repeats), y1 = max(mat_d_vlhA, na.rm = T), lwd = 3, col = 'darkred')
+abline(v = approx_tsss, lty=2, lwd = 2)
+legend('bottomright', legend = c('GAA-repeats', 'TSS'), lty = c(1,2), col = c('darkred', 'black'), lwd = 2, bty = 'n', ncol = 2)
+
+matplot(`Sequence (nts)`, mat_d_non_vlhA, type = 'l', lwd = 0.1,  col = 1, ylab = 'Size of open states (nts)', main = paste(ncol(mat_d_non_vlhA), 'non-vlhA promoter sequences'))
+
+abline(v = approx_tsss, lty=2, lwd = 2)
+legend('bottomright', legend = c('TSS'), lty = c(2), col = c('black'), lwd = 2, bty = 'n')
+```
+
 
 ```{r vlhA vs non-vlhA, EP}
 zout <- -(350):(350) #approximately equales 200 nts
@@ -332,16 +383,12 @@ str(Lep_non_vlhA)
 par(mfrow = c(2,1))
 `Sequence (nts)` <- 1:nrow(Lep_vlhA)-200
 matplot(`Sequence (nts)`, Lep_vlhA, type = 'l', lwd = 0.1,  col = 1, ylab = 'Electrostatic potential (arbitrary units)', main = paste(ncol(mat_E0_vlhA), 'for vlhA promoter sequences'))
-
-abline(v = 300, lty =2, lwd = 2)
+abline(v = 0, lty = 2)
+segments(x0 = -105, x1 = -70, y0 = max(Lep_non_vlhA), y1 = max(Lep_non_vlhA), col = 1, lwd = 2)
 
 matplot(`Sequence (nts)`, Lep_non_vlhA, type = 'l', lwd = 0.1,  col = 1, ylab = 'Electrostatic potential (arbitrary units)', main = paste(ncol(mat_E0_non_vlhA), 'for non-vlhA promoter sequences'))
 abline(v = 300, lty =2, lwd = 2)
-
-
-
-
-
+abline(v = 0, lty = 2)
 
 ```
 
@@ -405,7 +452,7 @@ segments(x0 = -105, x1 = -70, y0 = 0.95, y1 = 0.95, col = 1, lwd = 2)
 
 
 
-```{r SIDD calculation for non-vlhA promoters}
+```{r SIDD calculation for non-vlhA promoters, eval=F}
 
 dir_sidd_non_vlhA <- ('/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/mycoplasma_non_vlhA_sidds/')
 
@@ -431,6 +478,14 @@ abline(v = 0, lty = 2)
 
 ```
 
+Loading pre-calcutated SIDD data in a form of .csv files from github 
+```{r Reading in SIDD profiles as .csv files}
+vlhA_sidds <- read.csv('https://raw.githubusercontent.com/FVortex/Orlov_et_al._Frontiers_in_Genetics_Mycoplasma_gallispeticum_script/master/vlhA_sidds.csv')[,-1] #the first row containing numbers is excluded
+
+non_vlhA_sidds <- read.csv('https://raw.githubusercontent.com/FVortex/Orlov_et_al._Frontiers_in_Genetics_Mycoplasma_gallispeticum_script/master/non_vlhA_sidds.csv')[,-1]
+```
+
+
 ```{r SIDD profiles for vlhA and non-vlhA together}
 
 par(mfrow = c(2,1))
@@ -445,17 +500,14 @@ abline(v = 0, lty = 2)
 
 ```
 
+
+Statisctics of SIDD profiles - maximun values for the complete sets of profiles
 ```{r SIDD statisctics}
 
 par(mfrow = c(1, 2))
 boxplot(apply(vlhA_sidds, 2, max), ylim = 0:1)
 boxplot(apply(non_vlhA_sidds, 2, max), ylim = 0:1)
 
-par(mfrow = c(1, 2))
-boxplot(apply(vlhA_sidds, 2, mean), ylim = c(0.02, 0.04))
-boxplot(apply(non_vlhA_sidds, 2, mean), ylim =  c(0.02, 0.04))
-
-boxplot(vlhA_sidds)
 ```
 
 ```{r Saving the complete SIDD data, eval=F}
