@@ -1,0 +1,648 @@
+---
+  title: "Mycoplasma_vs_Synechocystis_vs_E.coli"
+author: "Mikhail Orlov"
+date: '6 ноября 2017 г '
+output:
+  html_document: default
+pdf_document: default
+---
+  
+  ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Clearing workspace, setting working directory and loading R packages
+```{r, message=FALSE}
+rm(list=ls())
+
+#setwd('/home/mikhail/Documents/Script_2016_all/PCA/')
+
+library(R.matlab)
+library(seqinr)
+library(factoextra)
+#library(data.table)
+library(caret)
+#library(doMC)
+library(Biostrings)
+library(ape)
+library(reldna)
+library(fastcluster)
+library(dendextend)
+library(ggplot2)
+library(ggseqlogo)
+
+
+```
+
+```{r strReverse funtcion, message = FALSE}
+## a useful function: rev() for strings
+strReverse <- function(x)
+        sapply(lapply(strsplit(x, NULL), rev), paste, collapse="")
+
+if(!require(ape)){stop('Code requires library "ape".\n')}
+if(!require(reldna)){stop('Code requires library "reldna".\n')}
+if(!require(parallel)){stop('Code requires library "parallel".\n')}
+if(!require(Biostrings)){stop('Code requires library "Biostrings".\n')}
+
+get_forward_subseq <- function(seq, tss, boundaries) {
+  return(as.character(
+    DNAString(seq,
+              start = tss-boundaries[1],
+              nchar = sum(boundaries)+1)))
+}
+
+get_reverse_subseq <- function(seq, tss, boundaries) {
+  return(as.character(
+    reverseComplement(
+      DNAString(seq,
+                start = tss-boundaries[2],
+                nchar = sum(boundaries)+1))))
+}
+
+get_forward_substring <- function(seq, tss, boundaries) {
+   return(seq[(tss-boundaries[1]):(tss+boundaries[2])])
+}
+
+get_reverse_substring <- function(seq, tss, boundaries) {
+  res <- rev(chartr("ATGC", "TACG", seq[(tss-boundaries[2]):(tss+boundaries[1])]))
+  return(res)
+}
+
+cut_char_vec <- function(char_vec, tss, boundaries, strand) {
+  res <- switch(strand,
+         forward = char_vec[(tss-boundaries[1]):(tss+boundaries[2])],
+         reverse = char_vec[(tss-boundaries[2]):(tss+boundaries[1])]
+         )
+  return(res)
+}
+
+#' Title
+#'
+#' @param seq full sequence (chromosome)
+#' @param interval requested interval
+#' @param tss
+#' @param strand DNA strand
+#'
+#' @return
+#' @export
+#'
+#' @examples
+dynchars <- function(seq, average_interval_size, tss, boundaries, strand=c('forward','reverse')) {
+
+  if (missing(average_interval_size))
+  stop("Need to specify average_interval_size")
+
+  if(!is.character(seq))
+    stop("Sequence must be a character vector containing A, C, G, T letters only")
+  #make sure no small letters are present
+  seq <- toupper(seq)
+  # if((tss - average_interval_size < 1) || (tss + average_interval_size > length(seq)))
+  #   stop("Considered average_interval_size exceeds the size of the sequence")
+  
+  # seq <- switch(strand, 
+  #               forward = seq,
+  #               reverse = as.character(reverseComplement(DNAString(seq))))
+  # seq <- unlist(strsplit(seq, ''))
+  # seq <- toupper(seq)
+  
+  boundaries <- boundaries + average_interval_size %/% 2
+  
+  seq <- cut_char_vec(seq, tss, boundaries, strand)
+
+  # strand <- match.arg(strand)
+  # seq <- switch(strand,
+  #             forward=get_forward_substring(seq, tss, boundaries),
+  #             reverse=get_forward_substring(seq, tss, boundaries))#get_reverse_substring(seq, tss, boundaries))
+
+  a<-3.4*10^(-10)
+  #I<-c(7.6, 4.8, 8.2, 4.1)*10^(-44)
+  K<-c(227, 155, 220, 149)*10^(-20)
+  V<-c(2.09, 1.43, 3.12, 2.12)*10^(-20)
+
+  csA<-cumsum(seq=='A')
+  csT<-cumsum(seq=='T')
+  csG<-cumsum(seq=='G')
+  csC<-cumsum(seq=='C')
+
+  countA = csA[average_interval_size:length(csA)]-c(0, csA[1:(length(csA)-average_interval_size)])
+  countT = csT[average_interval_size:length(csT)]-c(0, csT[1:(length(csT)-average_interval_size)])
+  countG = csG[average_interval_size:length(csG)]-c(0, csG[1:(length(csG)-average_interval_size)])
+  countC = csC[average_interval_size:length(csC)]-c(0, csC[1:(length(csC)-average_interval_size)])
+
+  M <- cbind(countA, countT, countG, countC)/average_interval_size
+
+  #Is <- as.numeric(M%*%I)#! numeric conversion
+  Ks <- as.numeric(M %*% K)
+  Vs <- as.numeric(M %*% V)
+
+  E0 <- (8*(Ks*Vs)^0.5)* 6E23 / 4184
+  d <- ((Ks*a^2)/Vs)^(0.5)/a;
+  gc = M[,3] + M[,4]
+
+  dynchars_return <- list(E0=E0, d=d, gc=gc)
+  return(dynchars_return)
+}
+
+#' Title
+#'
+#' @param tss_position
+#' @param extended_string -- vector of characters
+#' @param ep_interval
+#' @param zout
+#' @param strand
+#'
+#' @return
+#' @export
+#'
+#' @examples
+calculate_EP_on_interval <- function(tss_position, extended_string, ep_interval=c(270, 130), zout=-540:179, strand=c('forward','reverse')) {
+  #lseqspline1D(substr(e.coli_U00096.2, exp_tsss[i]-250, exp_tsss[i]+150), bound=c(50, 350), ref=251 )
+  # strand<- match.arg(strand)
+  #extended_string <- unlist(strsplit(extended_string, ''))
+  # subseq <-switch(strand,
+  #                 forward = get_forward_substring(extended_string, tss_position, ep_interval),
+  #                 reverse = get_reverse_substring(extended_string, tss_position, ep_interval))
+  # subseq <- paste0(subseq, collapse = "")
+  
+  # subseq <- switch(strand,
+  #                  forward = get_forward_subseq(extended_string, tss_position, ep_interval),
+  #                  reverse = get_reverse_subseq(extended_string, tss_position, ep_interval))
+  # subseq <- switch(strand,
+  #                  forward = get_forward_substring(extended_string, tss_position, ep_interval),
+  #                  reverse = get_reverse_substring(extended_string, tss_position, ep_interval))
+  # subseq <- as.character(subseq)
+  subseq <- as.character(cut_char_vec(extended_string, tss_position, ep_interval, strand))
+  subseq <- paste0(subseq, collapse = "")
+  p <- lseqspline1D(
+    subseq,
+    bound=c(50, 350),
+    ref=271)
+  return(p$mpot[p$x %in% zout])
+}
+
+#' Title
+#'
+#' @param dnaSeq
+#' @param dynamic_interval
+#' @param tss_position
+#' @param ep_interval
+#' @param zout
+#' @param strand
+#'
+#' @return
+#' @export
+#'
+#' @examples
+calculate_profile <- function(dnaSeq, average_interval_size, tss_position, dynamic_interval, ep_interval=c(270, 130), zout=-540:179, strand=c('forward','reverse')) {
+  #ep_interval = c(163, 213) for reverse, for forward c(267, 217), zout - the same
+  #seq, average_interval_size, tss, boundaries, strand=c('forward','reverse')
+  #dnaSeq <- unlist(strsplit(dnaSeq, ''))
+  dynRes <- dynchars(dnaSeq, average_interval_size, tss_position,  dynamic_interval, strand)
+  epRes <- calculate_EP_on_interval(tss_position, dnaSeq, ep_interval, zout, strand)
+  return(c(dynRes$E0, dynRes$d, epRes, dynRes$gc))
+}
+```
+
+
+
+
+
+```{r New data }
+library(seqinr)
+vlhA_new <- read.fasta('/home/mikhail/Documents/mycoplasma/gaa_for_biophysics1000(1).fasta', as.string = T, seqonly = F)
+#vlhA_line <- readline('/home/mikhail/Documents/gaa_for_physics(1).fasta')
+
+GC(strsplit(paste0(vlhA_new, collapse = ''), '')[[1]])
+str(vlhA_line)
+length(vlhA_new)
+table(sapply(vlhA_new, nchar))
+vlhA_new <- vlhA_new[which(sapply(vlhA_new, nchar) !=400)]
+
+names_vlhA <- names(sapply(vlhA_new, FUN = function(x) {names(x[2])}))
+strands_vlhA <- substr(names_vlhA, nchar(names_vlhA), nchar(names_vlhA))
+
+table(strands_vlhA)
+nonvlhA_new <- read.fasta('/home/mikhail/Documents/mycoplasma/S6_promoters_all_genes.fasta', as.string = T, seqonly = F)
+nchar(nonvlhA_new[[1]][1])
+
+
+labels <- rep('', 200)
+labels[seq(1, 200, 10)] <- seq(-100, 100, 10)
+ggseqlogo(sapply(vlhA_new[], FUN = function(x) {substr(toupper(x), start = 400-100, stop = 400+100)}),  ncol = 1)+ scale_y_continuous(name="Информационнное содержание (бит)")+scale_x_discrete(name ="Последовательность относительно начала GAA-повторов (п.н.)", limits=seq_along(labels), labels = labels)+coord_fixed(ratio = 7)
+
+ggseqlogo(sapply(nonvlhA_new[], FUN = function(x) {substr(toupper(x), start = 1, stop = 100)}),  ncol = 1)+ scale_y_continuous(name="Информационнное содержание (бит)")+scale_x_discrete(name ="Последовательность относительно приблизительного положения ТСТ (п.н.)", limits=seq_along(vlhA_new[[1]]), labels =seq_along(vlhA_new)[[1]])+coord_fixed(ratio = 7)
+
+library(ape)
+
+image.DNAbin(as.DNAbin(t(sapply(vlhA_new, FUN = function(x) {strsplit(x, split = '')[[1]]}))))
+image.DNAbin(as.DNAbin(t(sapply(nonvlhA_new, FUN = function(x) {strsplit(x, split = '')[[1]]}))))
+
+str_count(vlhA_new[[1]], pattern = 'gaagaa')
+counts <- sapply(vlhA_new, FUN = function(x) {str_count(x, pattern = 'gaagaa')})
+table(counts)
+
+ord <- order(counts)
+
+image.DNAbin(as.DNAbin(t(sapply(vlhA_new[ord], FUN = function(x) {strsplit(x, split = '')[[1]]}))))
+
+
+```
+
+```{r viccinity of TSS for both groups}
+library(stringr)
+vlhA_new_200nts <- sapply(vlhA_new, FUN = function(x) {substr(x, 550 - 50, 550 + 50)})
+image.DNAbin(as.DNAbin(t(sapply(vlhA_new_200nts, function(x) {strsplit(x, split = '')[[1]]}))))
+
+#vlhA
+pribnow_etracted_vlhA <- str_extract_all(string = vlhA_new_200nts, pattern = 't[:alpha:]{3}at')
+#one ore two hits?
+table(sapply(pribnow_etracted_vlhA, length))
+logo_pribnow_vlhA <- ggseqlogo(data = toupper(unlist(pribnow_etracted_vlhA)))
+
+#non-vlhA
+
+nonvlhA_new_200nts <- sapply(nonvlhA_new, FUN = function(x) {substr(x, 1000 - 20, 1000 + 20)})
+image.DNAbin(as.DNAbin(t(sapply(nonvlhA_new_200nts, function(x) {strsplit(x, split = '')[[1]]}))))
+
+pribnow_etracted_nonvlhA <- sapply(nonvlhA_new, FUN = function(x) {substr(x, 995, 1005)})
+#extracting by absolute positions
+pribnow_etracted_nonvlhA <- str_extract_all(string = nonvlhA_new_200nts, pattern = 't[:alpha:]{3}at')
+
+#one ore two hits?
+table(sapply(pribnow_etracted_nonvlhA, length))
+logo_pribnow_nonvlhA <- ggseqlogo(data = toupper(unlist(pribnow_etracted_nonvlhA)))
+
+gridExtra::grid.arrange(logo_pribnow_vlhA, logo_pribnow_nonvlhA, ncol =1 )
+str_locate_all(string = vlhA_new_200nts, pattern = 'taatat') # 5,4,3 position are not that important
+ta___ts <- str_locate_all(string = vlhA_new_200nts, pattern = 't[:alpha:]{3}at') 
+
+#one or two matches?
+
+table(sapply(ta___ts, nrow))
+#one match
+ind1 <- which(sapply(ta___ts, nrow) == 1)
+firsts <-  t(sapply(ta___ts[ind1], FUN = function(x) {x}))
+#two matches
+ind2 <- which(sapply(ta___ts, nrow) == 2)
+seconds <- t(sapply(ta___ts[ind2], FUN = function(x) {x[2,]}))
+
+#combining one match and two matches
+
+df_positions <- matrix(data = NA, nrow = length(ta___ts), ncol = 2)
+
+df_positions[ind1,] <- firsts
+df_positions[ind2,] <- seconds
+
+#sequnces of -10 box themself
+seqs_10_box_vlhA <- c()
+for (i in 1:nrow(df_positions)){
+  seqs_10_box_vlhA <- substr(vlhA_new_200nts, start = df_positions[i,1], stop = df_positions[i,2])
+}
+#starts_tataats <- lapply(loose_tataats, FUN = function(x) {x[,'start']})
+ta___ts_pos <- sapply(ta___ts, FUN = function(x) {x[which(x[,'start']>300&x[,'start']<400),]})
+sapply(ta___ts_pos, length)/2 #how many ta___t are there between 300 and 400 ?
+#same str_locate_all(string = vlhA_new, pattern = 't[:alpha:]{3}at')  
+
+#plotting ta___ts 
+
+plot(300:400, type = 'n')
+for (i in ta___ts_pos) abline(v = i[1]-300, col = 1:2) #shifted by 300 nts
+
+#ta__ats
+ta__ats <- str_locate_all(string = vlhA_new, pattern = 'ta[:alpha:]{2}at') 
+
+#starts_tataats <- lapply(loose_tataats, FUN = function(x) {x[,'start']})
+ta__ats_pos <- sapply(ta__ats, FUN = function(x) {x[which(x[,'start']>300&x[,'start']<400),]})
+sapply(ta__ats_pos, length)/2 #how many ta___t are there between 300 and 400 ?
+#same str_locate_all(string = vlhA_new, pattern = 't[:alpha:]{3}at')  
+
+#mean ta__at positions
+mean(unlist(ta__ats_pos))
+
+#when aligned accordingly to tss
+sapply(ta___ts_pos, FUN = function(x) {x[,'start']})
+
+#ta__ats
+ta2_ats <- str_locate_all(string = vlhA_new, pattern = 'ta[:alpha:]{2}at') 
+
+#starts_tataats <- lapply(loose_tataats, FUN = function(x) {x[,'start']})
+ta2_ats_pos <- sapply(ta2_ats, FUN = function(x) {x[which(x[,'start']>500&x[,'start']<650),]})
+sapply(ta2_ats, length)/2 #how many ta___t are there between 300 and 400 ?
+#same str_locate_all(string = vlhA_new, pattern = 't[:alpha:]{3}at')  
+
+#mean ta__at positions
+mean(unlist(ta__ats_pos))
+
+#when aligned accordingly to tss
+sapply(ta___ts_pos, FUN = function(x) {x[,'start']})
+
+
+```
+
+
+```{r Deleting substrings -repeats}
+
+library(dplyr)
+vlhA_new_no_repeats <- lapply(vlhA_new, FUN = function(x) {gsub(x =x, pattern = 'GAAGAAGAA', replacement = '', ignore.case = T)})
+
+boxplot(1000 - sapply(vlhA_new_no_repeats, nchar)) #length of removed parts)
+
+vlhA_new_no_repeats %>% sapply(FUN = function(x) {strsplit(x, split = '')[[1]][400:600]}) %>% t %>% as.DNAbin %>% image.DNAbin(show.labels = F) # [-100; 100] intervals 
+vlhA_new_no_repeats %>% sapply(FUN = function(x) {strsplit(x, split = '')[[1]][300:700]}) %>% t %>% as.DNAbin %>% image.DNAbin(show.labels = F) # [-200; 200] intervals 
+abline(v = 251, lwd = 3,lty = 2, col = 'black') #TATAAT is at +50, TSS is at 60 approx.
+abline(v = 250, lwd = 3,lty = 2, col = 'white')
+
+vlhA_new_no_repeats %>% sapply(FUN = function(x) {strsplit(x, split = '')[[1]][520:580]}) %>% t %>% as.DNAbin %>% image.DNAbin(show.labels = F) # approx. [-30; 30] intervals for TSS
+
+
+
+
+#where in the sequences woth no repeats TATAAT is located?
+
+ta2_ats <- str_locate_all(string = vlhA_new_no_repeats, pattern = 'ta[:alpha:]{2}at') 
+
+#starts_tataats <- lapply(loose_tataats, FUN = function(x) {x[,'start']})
+ta2_ats_pos <- sapply(ta2_ats, FUN = function(x) {x[which(x[,'start']>500&x[,'start']<650),]})
+sapply(ta2_ats, length)/2 #how many ta___t are there between 300 and 400 ?
+#same str_locate_all(string = vlhA_new, pattern = 't[:alpha:]{3}at')  
+plot(500:700, type = 'n'); abline(v = unlist(ta2_ats_pos)-500); abline(v = 550-500, lty = 2)
+#mean ta__at positions
+mean(unlist(ta2_ats_pos))
+
+#when aligned accordingly to tss
+sapply(ta___ts_pos, FUN = function(x) {x[,'start']})
+
+```
+
+```{r New vlhA data, physics}
+dyn_int <- 10
+                                                                                                      
+Ldyn <- lapply(vlhA_new, FUN = function(x) {dynchars(seq = (strsplit(x, split = '')[[1]]), average_interval_size = dyn_int, tss = 400-40, boundaries = c(-300, 300), strand = 'forward')}) # transcript is to the left of TSS! until reversed
+
+
+par(mfrow = c(3,2))
+
+matplot(sapply(Ldyn, function(x) {x$E0}), type = 'l', col = 1, lwd = 0.2)
+matplot(sapply(Ldyn, function(x) {x$d}), type = 'l', col = 1)
+matplot(sapply(Ldyn, function(x) {x$gc}), type = 'l', col = 1)
+
+matplot(sapply(Lep, function(x) {x$E0}), type = 'l', col = 1)
+
+```
+
+```{r Plots for paper}
+mat_dyn <- sapply(Ldyn, function(x) {x$E0})
+means_to_mat <- c( apply((mat_dyn),  MARGIN = 1, FUN = median))
+`Sequence (nts)` <- (seq_along(means_to_mat))
+
+matplot(`Sequence (nts)`, mat_dyn, type = 'l', lwd = 0.1,  col = 1, ylab = 'Open states activation energy (kcal/mole)', main = paste('Open states activation energy (sliding window', dyn_int, 'nts)\n for 543 vlhA sequences'))
+lines(`Sequence (nts)`, means_to_mat, col = 'magenta', lwd = 2)
+
+gaa_repeats <- (400):(425)
+approx_tsss <- max(gaa_repeats)-50
+
+segments(x0 = min(gaa_repeats), y0 = max(mat_dyn, na.rm = T), x1 = max(gaa_repeats), y1 = max(mat_dyn, na.rm = T), lwd = 3, col = 'darkred')
+# #arrows(x0 = approx_tsss, y0 = 280, x1 = approx_tsss, y1 = 255, col = 'darkred', lwd = 3)
+abline(v = approx_tsss, lty=2, lwd = 2)
+legend('topright', legend = c('GAA-repeats', 'Approximate TSS', 'Median values'), lty = c(1,2,1), col = c('darkred', 'black', 'magenta'), lwd = 2)
+
+#gc
+
+mat_dyn <- sapply(Ldyn, function(x) {x$gc})
+means_to_mat <- c( apply((mat_dyn),  MARGIN = 1, FUN = median))
+`Sequence (nts)` <- -rev(seq_along(means_to_mat))
+
+matplot(`Sequence (nts)`, mat_dyn, type = 'l', lty = 1, lwd = 1.5,  col = 1, ylab = 'GC-content', main ='') #paste('Open states activation energy (sliding window', dyn_int, 'nts)\n for 543 vlhA sequences'))
+#lines(`Sequence (nts)`, means_to_mat, col = 'magenta', lwd = 2)
+abline(v = )
+gaa_repeats <- (400):(425)
+approx_tsss <- max(gaa_repeats)-50
+
+segments(x0 = min(gaa_repeats), y0 = max(mat_dyn, na.rm = T), x1 = max(gaa_repeats), y1 = max(mat_dyn, na.rm = T), lwd = 3, col = 'darkred')
+# #arrows(x0 = approx_tsss, y0 = 280, x1 = approx_tsss, y1 = 255, col = 'darkred', lwd = 3)
+abline(v = approx_tsss, lty=2, lwd = 2)
+#legend('topright', legend = c('GAA-repeats', 'Approximate TSS', 'Median values'), lty = c(1,2,1), col = c('darkred', 'black', 'magenta'), lwd = 2)
+abline(h = 0.335, lty = 2, lwd = 2, col = 3)
+#d
+mat_dyn <- sapply(Ldyn, function(x) {x$d})
+means_to_mat <- c( apply((mat_dyn),  MARGIN = 1, FUN = median))
+`Sequence (nts)` <- (seq_along(means_to_mat))
+
+matplot(`Sequence (nts)`, mat_dyn, type = 'l', lwd = 0.1,  col = 1, ylab = 'Open states activation energy (kcal/mole)', main = paste('Open states activation energy (sliding window', dyn_int, 'nts)\n for 543 vlhA sequences'))
+lines(`Sequence (nts)`, means_to_mat, col = 'magenta', lwd = 2)
+
+gaa_repeats <- (400):(425)
+approx_tsss <- max(gaa_repeats)-50
+
+segments(x0 = min(gaa_repeats), y0 = max(mat_dyn, na.rm = T), x1 = max(gaa_repeats), y1 = max(mat_dyn, na.rm = T), lwd = 3, col = 'darkred')
+# #arrows(x0 = approx_tsss, y0 = 280, x1 = approx_tsss, y1 = 255, col = 'darkred', lwd = 3)
+abline(v = approx_tsss, lty=2, lwd = 2)
+legend('topright', legend = c('GAA-repeats', 'Approximate TSS', 'Median values'), lty = c(1,2,1), col = c('darkred', 'black', 'magenta'), lwd = 2)
+
+
+```
+
+```{r}
+
+zout <- -(350):(350) #approximately equales 200 nts
+Lep <- lapply(vlhA_new, FUN = function(x) {
+  p <- lseqspline1D(s = (x), bound = c(1, nchar(vlhA_new[[1]])), width = 1, ref = 400-40)
+(p$mpot[p$x %in% zout]) #!boundary
+})
+#EP
+
+
+# #length(samp$x)-which(samp$x %in% -50:-75)
+# #mp$mpot[samp$x %in% -50:-135]) #respective to TSS
+# #(p$mpot[p$x %in% zout])
+
+mat_ep <- sapply(Lep, function(x) {x})
+means_to_mat <- c(apply((mat_ep),  MARGIN = 1, FUN = median))
+`Sequence (angstrom)` <- (seq_along(zout))
+
+
+matplot(`Sequence (angstrom)`, mat_ep, type = 'l', lwd = 0.1,  col = 1, ylab = 'Electrostatic potential', main = 'Electrostatic potential\n for 441 vlhA sequences')
+lines(`Sequence (angstrom)`, means_to_mat, col = 'magenta', lwd = 2)
+
+# #gaa_repeats <- -155:-130*2.75
+# #approx_tsss <- -80*2.75
+
+samp <-  lseqspline1D(s = vlha_600$HFMG94VAA_RS01210, bound = c(1, nchar(vlha_600$HFMG94VAA_RS01210)), width = 1, ref = 600-80)
+
+approx_tsss_angstrom <- -(length(samp$x) - which(samp$x ==0))
+gaa_repeats_angstrom <- -(length(samp$x)-which(samp$x %in% -50:-150))
+# #gaa_repeats_angstrom <- approx_tsss_angstrom + c(-50, -85)*3.4
+
+
+segments(x0 = min(gaa_repeats_angstrom), y0 = max(mat_ep, na.rm = T), x1 = max(gaa_repeats_angstrom), y1 =  max(mat_ep, na.rm = T), lwd = 3, col = 'darkred')
+# #arrows(x0 = approx_tsss, y0 = 280, x1 = approx_tsss, y1 = 255, col = 'darkred', lwd = 3)
+abline(v = approx_tsss_angstrom, lty=2, lwd = 2)
+legend('topright', legend = c('GAA-repeats', 'Approximate TSS', 'Median values'), lty = c(1,2,1), col = c('darkred', 'black', 'magenta'), lwd = 2)
+
+```
+
+```{r Spaced plots}
+which.4_20 <- which(str_detect(vlhA_new, pattern = '[^(gaa)](gaa){4,20}(?!(gaa))'))
+
+str_located <- c()
+substrings_to_logo_lefts <- c()
+substrings_to_logo_rights <- c()
+for (i in vlhA_new){
+  tmp <- str_locate(i, pattern = '[^(gaa)](gaa){4,20}(?!(gaa))')
+  str_located <- rbind(str_located, tmp)
+                       
+  substrings_to_logo_lefts <- c(substrings_to_logo_lefts, substr(i, start = min(as.numeric(tmp))-25, stop =min(as.numeric(tmp))+6)) #for aligned left flanks
+  substrings_to_logo_rights <- c(substrings_to_logo_rights, substr(i, start = max(as.numeric(tmp))-6, stop =max(as.numeric(tmp))+25)) #for aligned right flanks
+  
+}
+
+zout <- -(350):(350) #approximately equales 200 nts
+Lep <- lapply(vlhA_new, FUN = function(x) {
+  p <- lseqspline1D(s = strReverse(x), bound = c(1, nchar(vlhA_new[[1]])), width = 1, ref = 400+40)
+(p$mpot[p$x %in% zout]) #!boundary
+  
+  inds_nts <- which(p$x%in%p$i1)
+  return((p$mpot[inds_nts]))
+})
+
+
+mat_dyn_E0 <- sapply(Ldyn, function(x) {x$E0})
+mat_dyn_d <- sapply(Ldyn, function(x) {x$d})
+mat_dyn_gc <- sapply(Ldyn, function(x) {x$gc})
+mat_ep <- sapply(Lep, function(x) {x})
+
+
+spaced_plot_dyn_E0<- list()
+spaced_plot_dyn_d<- list()
+spaced_plot_dyn_gc<- list()
+spaced_plot_dyn_EP <- list()
+
+for (i in 1:ncol(mat_dyn_E0)){
+  
+  pos <- str_located[i,] - 300 +40 #300 nts are ommited in the matrix, 40 nts to the TSS from GAA repeats
+ if (is.na(pos)[1]) {next}
+  print(pos)
+  spaced_plot_dyn_E0[[i]] <- mat_dyn_E0[,i] [c((1:min(pos)),(max(pos):length(mat_dyn_E0[,i])))]
+  spaced_plot_dyn_d[[i]] <- mat_dyn_d[,i] [c((1:min(pos)),(max(pos):length(mat_dyn_d[,i])))]
+  spaced_plot_dyn_gc[[i]]  <-  mat_dyn_gc[,i] [c((1:min(pos)),(max(pos):length(mat_dyn_gc[,i])))]
+  spaced_plot_dyn_EP[[i]] <-  mat_ep[,i][c((1:min(pos)),(max(pos):length(mat_dyn_gc[,i])))]
+}
+
+str(spaced_plot_dyn_E0)
+str(spaced_plot_dyn_d)
+str(spaced_plot_dyn_gc)
+matplot(spaced_plot_dyn, type = 'l', lwd = 0.5, col = 1)
+
+#E0
+`Sequence (nts)` <- -140:22
+
+
+plot(`Sequence (nts)`, ylim = range(spaced_plot_dyn_E0), type = 'n', lwd = 0.1,  col = 1, ylab = 'Open states activation energy (kcal/mole)', main = paste('Open states activation energy (sliding window', dyn_int, 'nts)\n for 543 vlhA sequences'))
+for (i in seq_along(spaced_plot_dyn_E0)) {lines(spaced_plot_dyn_E0[[i]], lwd = 0.1)}
+
+gaa_repeats <- 0:1
+approx_tsss <- -40
+
+abline(v = gaa_repeats, col = 'yellow')
+abline(v = approx_tsss, lty = 2, col = 1)
+legend('topright', legend = c('GAA-repeats', 'Approximate TSS', 'Median values'), lty = c(1,2,1), col = c('darkred', 'black', 'magenta'), lwd = 2)
+
+
+#d
+
+`Sequence (nts)` <- (seq_along(1:nrow(spaced_plot_dyn_d)))
+
+matplot(`Sequence (nts)`, spaced_plot_dyn_d, type = 'l', lwd = 0.1,  col = 1, ylab = 'Open states activation energy (kcal/mole)', main = paste('Open states activation energy (sliding window', dyn_int, 'nts)\n for 543 vlhA sequences'))
+
+
+gaa_repeats <- (140):(141)
+approx_tsss <- 100
+
+abline(v = seq(140, 141, by = 0.1), col = 'yellow')
+legend('topright', legend = c('GAA-repeats', 'Approximate TSS', 'Median values'), lty = c(1,2,1), col = c('darkred', 'black', 'magenta'), lwd = 2)
+
+#gc
+
+
+`Sequence (nts)` <- (seq_along(1:nrow(spaced_plot_dyn_gc)))
+
+matplot(`Sequence (nts)`, spaced_plot_dyn_gc, type = 'l', lwd = 0.1,  col = 1, ylab = 'Open states activation energy (kcal/mole)', main = paste('Open states activation energy (sliding window', dyn_int, 'nts)\n for 543 vlhA sequences'))
+
+
+gaa_repeats <- (140):(141)
+approx_tsss <- 100
+
+abline(v = seq(140, 141, by = 0.1), col = 'yellow')
+legend('topright', legend = c('GAA-repeats', 'Approximate TSS', 'Median values'), lty = c(1,2,1), col = c('darkred', 'black', 'magenta'), lwd = 2)
+```
+
+```{r Spaced plot for EP}
+
+zout <- -(500):(500) #approximately equales 200 nts
+Lep <- lapply(vlhA_new, FUN = function(x) {
+  p <- lseqspline1D(s = (x), bound = c(300, 500), width = 1, ref = 400-40)
+(p$mpot[p$x %in% zout]) #!boundary
+  
+  #inds_nts <- which(p$x%in%p$i1) #for nucleotide-wise vector
+  #return((p$mpot[inds_nts]))
+})
+
+
+
+#p <- lseqspline1D(s = strReverse(vlhA_new[[1]]), bound = c(1, nchar(vlhA_new[[1]])), width = 1, ref = 400+40)
+
+str(p$mpot)
+
+str(p$risem)
+range(p$risem)
+str(p$bound)
+
+inds_nts <- which(p$x%in%p$i1)
+  
+(p$mpot[inds_nts]) #!boundary
+#EP
+`Sequence (nts)` <- seq_along(Lep[[1]])
+plot(`Sequence (nts)`, ylim = range(spaced_plot_dyn_EP), type = 'n', lwd = 0.1,  col = 1, ylab = 'Open states activation energy (kcal/mole)', main = paste('Open states activation energy (sliding window', dyn_int, 'nts)\n for 543 vlhA sequences'))
+for (i in seq_along(Lep)) {lines(Lep[[i]], lwd = 0.1)}
+
+gaa_repeats <- 150:151
+approx_tsss <- 100
+
+abline(v = gaa_repeats, col = 'yellow')
+abline(v = approx_tsss, lty = 2, col = 1)
+legend('topright', legend = c('GAA-repeats', 'Approximate TSS', 'Median values'), lty = c(1,2,1), col = c('darkred', 'black', 'magenta'), lwd = 2)
+
+# #length(samp$x)-which(samp$x %in% -50:-75)
+# #mp$mpot[samp$x %in% -50:-135]) #respective to TSS
+# #(p$mpot[p$x %in% zout])
+
+mat_ep <- sapply(Lep, function(x) {x})
+means_to_mat <- (apply(mat_ep,  MARGIN = 1, FUN = median))
+`Sequence (angstrom)` <- seq_along(Lep)
+
+
+plot( Lep[[1]], ylim = range(mat_ep), type = 'l', lwd = 0.1,  col = 1, ylab = 'Electrostatic potential', main = 'Electrostatic potential\n for 441 vlhA sequences')
+for (i in seq_along(Lep)) lines(Lep[[i]])
+lines(`Sequence (angstrom)`, means_to_mat, col = 'magenta', lwd = 2)
+
+min(sapply(Lep, length))
+mat_ep <- sapply(Lep, FUN = function(x) {x[1:560]})
+str(mat_ep)
+
+mat_ep_hclusted <- hclust(dist(t(mat_ep)), method = 'ward.D2')
+plot(mat_ep_hclusted, label = F)
+source('https://raw.githubusercontent.com/FVortex/different_bacteria_physics_and_text/master/cuplcl.R')
+
+str(mat_ep)
+cuplcl(t(mat_ep)[,440:560], method = 'ward', k = 4)
+```
+
+```{r TATAAT searches}
+
+vlhA_tataats <- str_locate_all(vlhA_new, pattern = 'taatat')
+
+table(sapply(vlhA_tataats, length)/2) #how many in a sequence&
+
+vlhA_tataats[which(sapply(vlhA_tataats, length)/2 ==3)]
+```
+

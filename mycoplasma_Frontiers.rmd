@@ -298,6 +298,17 @@ Ldyn_non_vlhA <- lapply(non_vlhA, FUN = function(x) {dynchars(seq = strsplit(x, 
 mat_E0_non_vlhA <- sapply(Ldyn_non_vlhA, function(x) {x$E0})
 ```
 
+
+```{r saving E0 and d to files for github}
+write.csv(x = mat_E0_vlhA, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/vlhA_activation_energy.csv')
+
+write.csv(x = mat_E0_non_vlhA, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/non_vlhA_activation_energy.csv')
+
+write.csv(x = mat_d_vlhA, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/vlhA_size_of_open_states.csv')
+
+write.csv(x = mat_d_non_vlhA, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/non_vlhA_size_of_open_states.csv')
+```
+
 ```{r Plotting E0 profiles for vlhA vs non-vlhA promoters}
 par(mfrow = c(2,1))
 `Sequence (nts)` <- 1:nrow(mat_E0_vlhA)-200
@@ -368,6 +379,7 @@ Lep_vlhA <- sapply(vlhA, FUN = function(x) {
 })
 
 str(Lep_vlhA)
+dim(Lep_vlhA)
 
 Lep_non_vlhA <- sapply(non_vlhA, FUN = function(x) {
   p <- lseqspline1D(s = strReverse(x), bound = c(500-200, 500+200), width = 1, ref = 500)
@@ -378,7 +390,12 @@ Lep_non_vlhA <- sapply(non_vlhA, FUN = function(x) {
 })
 
 str(Lep_non_vlhA)
+dim(Lep_non_vlhA)
+#saving file for github
+write.csv(Lep_vlhA, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/vlhA_electrostatic.csv')
+write.csv(Lep_non_vlhA, file = '/home/mikhail/Documents/Papers_presentations/Frontiers_in_genetics_Mycoplasma/mycoplasma_script_Frontiers/non_vlhA_electrostatic.csv')
 
+Lep_non_vlhA
 #plotting vlhA vs non-vlhA
 par(mfrow = c(2,1))
 `Sequence (nts)` <- 1:nrow(Lep_vlhA)-200
